@@ -1,16 +1,16 @@
-# requirements.txt (recommended for deployment)
 deepface==0.0.95
 tensorflow==2.19.1
+tf-keras==2.19.0
 numpy==1.26.4
 opencv-python-headless==4.11.0.86
 mtcnn==1.0.0
 retina-face==0.0.17
 pillow==11.3.0
-requests==2.32.5
-Jinja2==3.1.6
 
 # Web / server
 fastapi==0.95.2
 uvicorn[standard]==0.22.0
 gunicorn==23.0.0
 python-multipart==0.0.6
+Jinja2==3.1.6
+requests==2.32.5
