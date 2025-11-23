@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Conda environments (DO NOT UPLOAD!)
+env/
+venv/
+.venv/
+*env/
+
+# Virtual env caches
+*.egg-info/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Models (optional)
+*.h5
+*.pkl
