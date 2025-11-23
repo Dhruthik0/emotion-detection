@@ -3,16 +3,15 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.eggs/
+*.egg-info/
 
-# Conda environments (DO NOT UPLOAD!)
+# Conda & venv
 env/
 venv/
 .venv/
 *env/
-
-# Virtual env caches
-*.egg-info/
-.eggs/
+*.conda/
 
 # IDE
 .vscode/
@@ -24,6 +23,7 @@ venv/
 # Logs
 *.log
 
-# Models (optional)
+# Models & large files
 *.h5
 *.pkl
+*.ckpt
