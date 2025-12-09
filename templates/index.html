@@ -6,28 +6,37 @@
     <style>
       body { font-family: Arial, sans-serif; display:flex; gap:20px; padding:20px; }
       #video, #canvas { border: 1px solid #ddd; }
-      #controls { max-width: 360px; }
+      #controls { max-width: 420px; }
       .label { font-weight: 600; margin-top:10px; }
       #emotionBox { font-size: 20px; margin-top: 8px; }
       pre { background:#f7f7f7; padding:8px; border-radius:4px; overflow:auto; max-height:240px;}
+      .modal { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; background: rgba(0,0,0,0.4); }
+      .modal-content { background:white; padding:20px; border-radius:8px; width:320px; text-align:center; }
+      .record-row { padding:8px 0; border-bottom:1px solid #eee; }
+      .record-emo { font-weight:700; font-size:16px; }
+      .record-time { color:#666; font-size:12px; margin-bottom:6px; display:block; }
     </style>
   </head>
   <body>
-    <div>
-      <video id="video" autoplay playsinline width="480" height="360"></video>
-      <canvas id="canvas" width="480" height="360" style="display:none"></canvas>
+    <div style="position:relative">
+      <video id="video" autoplay playsinline width="640" height="480"></video>
+      <canvas id="overlay" width="640" height="480" style="position:absolute;left:0;top:0;pointer-events:none"></canvas>
     </div>
 
     <div id="controls">
+      <div class="label">User</div>
+      <div id="userNameDisplay" style="font-weight:700; margin-bottom:8px">—</div>
+
       <div class="label">Detected Emotion</div>
       <div id="emotionBox">—</div>
 
-      <div class="label">Confidence / All Emotions</div>
+      <div class="label">All Emotions</div>
       <pre id="emotionsPre">{}</pre>
 
       <div style="margin-top:12px;">
         <button id="startBtn">Start</button>
         <button id="stopBtn">Stop</button>
+        <button id="toggleAutoSaveBtn">Auto-save: OFF</button>
       </div>
 
       <div style="margin-top:12px;">
@@ -35,21 +44,88 @@
         <input id="intervalMs" type="number" value="800" min="100" />
       </div>
 
-      <p style="margin-top:12px;color:#666">Note: frames are sent to the server for inference.</p>
+      <div style="margin-top:12px;">
+        <label for="saveIntervalMs">Auto-save interval (ms)</label><br/>
+        <input id="saveIntervalMs" type="number" value="5000" min="1000" />
+      </div>
+
+      <hr/>
+
+      <div class="label">Lookup Records by Name</div>
+      <input id="lookupNameInput" type="text" placeholder="Enter user name" style="width:100%;padding:6px" />
+      <div style="margin-top:8px;">
+        <button id="lookupBtn">Lookup</button>
+      </div>
+      <div id="recordsList" style="margin-top:12px; max-height:300px; overflow:auto; border:1px solid #eee; padding:8px"></div>
     </div>
+
+    <div id="nameModal" class="modal" style="display:block">
+      <div class="modal-content">
+        <h3>Enter your name</h3>
+        <input id="nameInputModal" type="text" placeholder="Your name" style="width:100%;padding:8px;margin-top:8px" />
+        <div style="margin-top:12px;">
+          <button id="nameSubmitBtn">Continue</button>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="captureCanvas" width="640" height="480" style="display:none"></canvas>
 
     <script>
       const video = document.getElementById('video');
-      const canvas = document.getElementById('canvas');
-      const ctx = canvas.getContext('2d');
+      const overlay = document.getElementById('overlay');
+      const octx = overlay.getContext('2d');
+      const captureCanvas = document.getElementById('captureCanvas');
+      const ctx = captureCanvas.getContext('2d');
+
       const emotionBox = document.getElementById('emotionBox');
       const emotionsPre = document.getElementById('emotionsPre');
       const startBtn = document.getElementById('startBtn');
       const stopBtn = document.getElementById('stopBtn');
       const intervalInput = document.getElementById('intervalMs');
+      const saveIntervalInput = document.getElementById('saveIntervalMs');
+      const toggleAutoSaveBtn = document.getElementById('toggleAutoSaveBtn');
+      const recordsList = document.getElementById('recordsList');
+      const lookupInput = document.getElementById('lookupNameInput');
+      const lookupBtn = document.getElementById('lookupBtn');
+
+      const nameModal = document.getElementById('nameModal');
+      const nameInputModal = document.getElementById('nameInputModal');
+      const nameSubmitBtn = document.getElementById('nameSubmitBtn');
+      const userNameDisplay = document.getElementById('userNameDisplay');
 
       let stream = null;
       let intervalId = null;
+      let lastPrediction = null;
+      let autoSave = false;
+      let lastSaveAt = 0;
+      let userName = null;
+
+      function drawOverlay(pred) {
+        octx.clearRect(0,0,overlay.width, overlay.height);
+        if (!pred) return;
+        const r = pred.region || {};
+        if (r.w && r.h) {
+          octx.strokeStyle = 'lime';
+          octx.lineWidth = 2;
+          octx.strokeRect(r.x, r.y, r.w, r.h);
+        }
+        const text = pred.dominant_emotion || '';
+        if (text) {
+          octx.font = '22px Arial';
+          const padding = 6;
+          const metrics = octx.measureText(text);
+          const tw = metrics.width + padding*2;
+          const th = 28;
+          let lx = r.x || 10;
+          let ly = (r.y && r.y - th - 4) ? r.y - 6 : 30;
+          if (lx + tw > overlay.width) lx = overlay.width - tw - 10;
+          octx.fillStyle = 'rgba(0,0,0,0.6)';
+          octx.fillRect(lx, ly - th + 6, tw, th);
+          octx.fillStyle = 'white';
+          octx.fillText(text, lx + padding, ly - 6 + 18 - 6);
+        }
+      }
 
       async function startCamera() {
         try {
@@ -66,36 +142,49 @@
           stream = null;
           video.srcObject = null;
         }
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+        octx.clearRect(0,0,overlay.width, overlay.height);
+        emotionBox.innerText = '—';
+        emotionsPre.innerText = '{}';
       }
 
-      async function sendFrame() {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(async (blob) => {
+      async function sendFrameAndMaybeSave() {
+        if (!stream) return;
+        ctx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+        captureCanvas.toBlob(async (blob) => {
           if (!blob) return;
           const fd = new FormData();
           fd.append('file', blob, 'frame.jpg');
-
           try {
-            const resp = await fetch('/predict', {
-              method: 'POST',
-              body: fd
-            });
-            if (!resp.ok) {
-              const txt = await resp.text();
-              console.error('Server error', resp.status, txt);
-              return;
-            }
+            const resp = await fetch('/predict', { method: 'POST', body: fd });
+            if (!resp.ok) { console.error('Server error', resp.status); return; }
             const data = await resp.json();
+            lastPrediction = data;
             emotionBox.innerText = data.dominant_emotion || '—';
             emotionsPre.innerText = JSON.stringify(data.emotions || {}, null, 2);
+            drawOverlay(data);
 
-            if (data.region) {
-              const { x, y, w, h } = data.region;
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              ctx.strokeStyle = 'lime';
-              ctx.lineWidth = 2;
-              ctx.strokeRect(x, y, w, h);
+            if (autoSave && userName) {
+              const now = Date.now();
+              const saveInterval = parseInt(saveIntervalInput.value) || 5000;
+              if (now - lastSaveAt >= saveInterval) {
+                lastSaveAt = now;
+                const saveForm = new FormData();
+                saveForm.append('name', userName);
+                saveForm.append('dominant_emotion', data.dominant_emotion || '');
+                saveForm.append('emotions_json', JSON.stringify(data.emotions || {}));
+                saveForm.append('region_json', JSON.stringify(data.region || {}));
+                try {
+                  await fetch('/save', { method: 'POST', body: saveForm });
+                } catch (err) {
+                  console.error('Save error', err);
+                }
+              }
             }
+
           } catch (err) {
             console.error('Network / parse error', err);
           }
@@ -106,16 +195,69 @@
         startCamera();
         const ms = parseInt(intervalInput.value) || 800;
         if (intervalId) clearInterval(intervalId);
-        intervalId = setInterval(sendFrame, ms);
+        intervalId = setInterval(sendFrameAndMaybeSave, ms);
       };
 
       stopBtn.onclick = () => {
-        if (intervalId) clearInterval(intervalId);
-        intervalId = null;
         stopCamera();
-        emotionBox.innerText = '—';
-        emotionsPre.innerText = '{}';
       };
+
+      toggleAutoSaveBtn.onclick = () => {
+        autoSave = !autoSave;
+        toggleAutoSaveBtn.innerText = 'Auto-save: ' + (autoSave ? 'ON' : 'OFF');
+      };
+
+      // ---------- LOOKUP: convert to IST (UTC+5:30) ----------
+      lookupBtn.onclick = async () => {
+        const name = lookupInput.value.trim();
+        if (!name) { recordsList.innerHTML = "<div style='color:gray'>Enter a name to lookup</div>"; return; }
+        recordsList.innerHTML = "Loading...";
+        try {
+          const resp = await fetch('/records?name=' + encodeURIComponent(name) + '&limit=200');
+          const j = await resp.json();
+          if (!j.records || j.records.length === 0) {
+            recordsList.innerHTML = "<div style='color:gray'>No records found for " + name + "</div>";
+            return;
+          }
+          const html = j.records.map(r => {
+            // Convert server UTC timestamp to IST explicitly
+            let istTime = '';
+            if (r.created_at) {
+              try {
+                const d = new Date(r.created_at);
+                // IST offset = +5h30m = 330 minutes
+                const istDate = new Date(d.getTime() + (330 * 60 * 1000));
+                istTime = istDate.toLocaleString('en-IN');
+              } catch (e) {
+                istTime = r.created_at;
+              }
+            }
+            const emo = r.dominant_emotion || '—';
+            return `<div class="record-row"><span class="record-time">${istTime}</span><span class="record-emo">Emotion: ${emo}</span></div>`;
+          }).join('');
+          recordsList.innerHTML = html;
+        } catch (err) {
+          console.error(err);
+          recordsList.innerHTML = "<div style='color:red'>Error fetching records</div>";
+        }
+      };
+
+      nameSubmitBtn.onclick = () => {
+        const v = nameInputModal.value.trim();
+        if (!v) { alert('Please enter your name'); return; }
+        userName = v;
+        userNameDisplay.innerText = userName;
+        nameModal.style.display = 'none';
+      };
+
+      nameInputModal.addEventListener('keyup', (e) => {
+        if (e.key === 'Enter') nameSubmitBtn.click();
+      });
+
+      window.addEventListener('load', () => {
+        overlay.width = 640; overlay.height = 480;
+        captureCanvas.width = 640; captureCanvas.height = 480;
+      });
     </script>
   </body>
 </html>
